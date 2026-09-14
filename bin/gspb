@@ -36,7 +36,7 @@ gspb-AI: 跨 Harness 规培手册补录工具
 #USAGE
 
 MODE=""
-DEPT="口腔修复科"
+DEPT=""
 WINDOW=""
 PLAN_PATH=""
 LIST_URL=""

@@ -3,8 +3,65 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# 自动修复 PATH：若终端未加载 ~/.local/bin，自动探查并补全
+# 自动安装并配置 ego lite 浏览器环境
+install_ego_lite() {
+  echo "=================================================================="
+  echo "📦 正在为你自动下载并安装 ego lite 浏览器底座（约需 10~20 秒，请稍候）..."
+  echo "=================================================================="
+  ARCH=$(uname -m)
+  if [ "$ARCH" = "arm64" ]; then
+    DMG_URL="https://cdn.ego.app/setup/macos/arm64/egolite.dmg"
+  else
+    DMG_URL="https://cdn.ego.app/setup/macos/x64/egolite.dmg"
+  fi
+
+  TMP_DMG=$(mktemp -t egolite.XXXXXX).dmg
+  echo "⬇️ 正在从官方高速 CDN 下载安装包..."
+  if curl -fsSL "$DMG_URL" -o "$TMP_DMG"; then
+    MOUNT_DIR=$(mktemp -d -t ego-mount.XXXXXX)
+    echo "💿 正在挂载并部署到应用程序目录..."
+    hdiutil attach "$TMP_DMG" -mountpoint "$MOUNT_DIR" -nobrowse -quiet
+    
+    APP_DIR="/Applications"
+    if [ ! -w "$APP_DIR" ]; then
+      APP_DIR="$HOME/Applications"
+      mkdir -p "$APP_DIR"
+    fi
+
+    cp -R "$MOUNT_DIR"/*.app "$APP_DIR/" 2>/dev/null || true
+    hdiutil detach "$MOUNT_DIR" -quiet 2>/dev/null || true
+    rm -f "$TMP_DMG"
+    rm -rf "$MOUNT_DIR"
+
+    echo "🚀 正在启动 ego lite 初始化运行底座..."
+    open -a "$APP_DIR/ego lite.app" 2>/dev/null || true
+
+    for i in $(seq 1 8); do
+      if [ -x "$HOME/.local/bin/ego-browser" ] || [ -x "$HOME/.local/share/ego/active_version_dir/Helpers/ego-browser" ]; then
+        break
+      fi
+      sleep 1
+    done
+  else
+    rm -f "$TMP_DMG" 2>/dev/null || true
+    echo "⚠️ 自动下载受限，请在浏览器中手动下载安装：https://lite.ego.app/" >&2
+  fi
+}
+
+# 1. 自动探查并补全 PATH
 if ! command -v ego-browser >/dev/null 2>&1; then
+  if [ -x "$HOME/.local/bin/ego-browser" ]; then
+    export PATH="$HOME/.local/bin:$PATH"
+  elif [ -x "$HOME/.local/share/ego/active_version_dir/Helpers/ego-browser" ]; then
+    mkdir -p "$HOME/.local/bin"
+    ln -sfn "$HOME/.local/share/ego/active_version_dir/Helpers/ego-browser" "$HOME/.local/bin/ego-browser"
+    export PATH="$HOME/.local/bin:$PATH"
+  fi
+fi
+
+# 2. 若仍未找到，自动下载安装 ego lite
+if ! command -v ego-browser >/dev/null 2>&1; then
+  install_ego_lite
   if [ -x "$HOME/.local/bin/ego-browser" ]; then
     export PATH="$HOME/.local/bin:$PATH"
   elif [ -x "$HOME/.local/share/ego/active_version_dir/Helpers/ego-browser" ]; then
@@ -16,10 +73,8 @@ fi
 
 if ! command -v ego-browser >/dev/null 2>&1; then
   echo "==================================================================" >&2
-  echo "❌ 提示：未检测到 ego lite 浏览器运行环境" >&2
-  echo "👉 请先下载并打开 ego lite（仅需下载后双击打开一次即可）：" >&2
-  echo "   官方下载地址：https://lite.ego.app/" >&2
-  echo "下载打开后，重新在终端运行一次本命令即可！" >&2
+  echo "❌ 未能自动完成 ego lite 安装，请先在浏览器手动下载并打开：" >&2
+  echo "   https://lite.ego.app/" >&2
   echo "==================================================================" >&2
   exit 1
 fi
@@ -51,7 +106,6 @@ if [ -d "$HOME/.local/share" ]; then
 fi
 
 for target_dir in "${CANDIDATE_DIRS[@]}"; do
-  # 处理悬空软链情况
   if [ -L "$target_dir" ] && [ ! -e "$target_dir" ]; then
     target_dest=$(readlink "$target_dir")
     mkdir -p "$target_dest" 2>/dev/null || true
@@ -77,5 +131,5 @@ echo "   直接发送这一句话："
 echo ""
 echo "   「帮我补录轮转手册」"
 echo ""
-echo "助手会首先引导你登录系统，并在写入前把完整计划交由你审阅！"
+echo "助手会自动排除尚未开始轮转的未来科室，识别当前在转科室，并在写入前把完整计划交由你审阅！"
 echo "=================================================================="

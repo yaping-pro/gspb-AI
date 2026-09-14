@@ -139,7 +139,7 @@ async function ensureLogin(task, page, options = {}) {
  * @param {string} expectedIdentity 期望的用户身份
  * @returns {Promise<{recordId: string, window: Object, identity: string, dept: string}>}
  */
-async function resolveRecord(page, dept, listUrl, root, expectedIdentity) {
+async function resolveRecord(page, requestedDept, listUrl, root, expectedIdentity) {
   const kygl = loadKyglConfig(root);
   let targetUrl = listUrl || kygl.listFlow;
   if (!targetUrl.startsWith('http')) {
@@ -148,8 +148,8 @@ async function resolveRecord(page, dept, listUrl, root, expectedIdentity) {
 
   await page.goto(targetUrl);
 
-  // 轮询列表行直到出现目标科室，新路由异步加载约 5~8s
-  let matchedRow = null;
+  // 轮询列表行，新路由异步加载约 5~8s
+  let allRows = [];
   const pollStart = Date.now();
   const pollTimeout = 20000;
 
@@ -158,21 +158,80 @@ async function resolveRecord(page, dept, listUrl, root, expectedIdentity) {
     let res = null;
     try { res = JSON.parse(resStr); } catch (e) {}
     if (res && Array.isArray(res.rows) && res.rows.length > 0) {
-      matchedRow = res.rows.find(r => r.dept && r.dept.includes(dept));
-      if (matchedRow) break;
+      allRows = res.rows;
+      break;
     }
     await page.waitForTimeout(1000);
   }
 
-  if (!matchedRow) {
+  if (!allRows || allRows.length === 0) {
     const curUrl = await page.evaluate(() => location.href);
-    throw new Error(`未找到科室 [${dept}] 对应行（当前 URL: ${curUrl}）`);
+    throw new Error(`未能获取学生轮转手册列表行（当前 URL: ${curUrl}）`);
   }
 
-  if (!matchedRow.status || !matchedRow.status.includes('待提交')) {
-    throw new Error(`记录非待提交状态（当前：${matchedRow.status || '无状态'}），已停止`);
+  const today = new Date().toISOString().slice(0, 10);
+  let matchedRow = null;
+
+  // 1. 若用户显式指定了具体科室：严格校验该科室是否尚未开始轮转、是否处于待提交状态
+  if (requestedDept && requestedDept.trim()) {
+    const target = requestedDept.trim();
+    matchedRow = allRows.find(r => r.dept && r.dept.includes(target));
+    if (!matchedRow) {
+      const curUrl = await page.evaluate(() => location.href);
+      throw new Error(`未在手册列表中找到科室 [${target}]（当前 URL: ${curUrl}）`);
+    }
+
+    const [start] = (matchedRow.window || '').split('~').map(s => s.trim());
+    if (start && start > today) {
+      throw new Error(`❌ 科室 [${matchedRow.dept}] 尚未开始轮转（时间窗: ${matchedRow.window}，当前时间: ${today}）。根据规培管理纪律，严禁提前补录未来科室！`);
+    }
+
+    if (!matchedRow.status || !matchedRow.status.includes('待提交')) {
+      throw new Error(`❌ 科室 [${matchedRow.dept}] 当前状态为 [${matchedRow.status || '无状态'}]，非待提交状态，已停止。`);
+    }
+  } else {
+    // 2. 若用户未显式指定科室（如直接触发「帮我补录轮转手册」）：智能按时间窗与状态过滤
+    const active = [];
+    const pastPending = [];
+    const futureSkipped = [];
+
+    for (const r of allRows) {
+      if (!r.status || !r.status.includes('待提交')) continue;
+      const [start, end] = (r.window || '').split('~').map(s => s.trim());
+      if (!start || !end) continue;
+
+      if (start > today) {
+        // 严格剔除：尚未开始轮转的未来科室
+        futureSkipped.push(r);
+      } else if (today >= start && today <= end) {
+        // 当前正在轮转
+        active.push(r);
+      } else if (end < today) {
+        // 历史已过时间但仍待提交
+        pastPending.push(r);
+      }
+    }
+
+    const uniquePast = [...new Set(pastPending.map(d => d.dept))];
+    if (active.length > 0) {
+      matchedRow = active[0];
+      console.log(`🎯 智能识别到当前正在轮转科室: [${matchedRow.dept}] (时间窗: ${matchedRow.window})`);
+      if (uniquePast.length > 0) {
+        console.log(`ℹ️ 提示：同时检测到已出科但待补录的历史科室: ${uniquePast.join('、')}（如需补录请指定 --dept <科室>）`);
+      }
+    } else if (pastPending.length > 0) {
+      matchedRow = pastPending[0];
+      console.log(`🎯 当前无在转科室，智能选定最近已出科待补录科室: [${matchedRow.dept}] (时间窗: ${matchedRow.window})`);
+      if (uniquePast.length > 1) {
+        console.log(`ℹ️ 其他待补录历史科室: ${uniquePast.slice(1).join('、')}（如需补录请指定 --dept <科室>）`);
+      }
+    } else {
+      console.log(`✅ 检查完成：当前无需要补录的科室（未来尚未轮转的 ${futureSkipped.length} 个科室已自动排除，其余历史科室均已提交）。`);
+      process.exit(0);
+    }
   }
 
+  const dept = matchedRow.dept;
   const windowObj = { start: '', end: '' };
   if (matchedRow.window) {
     const parts = matchedRow.window.split('~').map(s => s.trim());
@@ -181,7 +240,6 @@ async function resolveRecord(page, dept, listUrl, root, expectedIdentity) {
       windowObj.end = parts[1];
     }
   }
-
   // 点击行内操作按钮（查看 / 录入）
   const clickRes = await page.evaluate(`(${CLICK_ROW_ACTION})(${JSON.stringify(dept)})`);
   if (!clickRes || !clickRes.startsWith('clicked')) {
@@ -269,11 +327,10 @@ async function resolveRecord(page, dept, listUrl, root, expectedIdentity) {
  * @param {Object} P 运行参数
  */
 async function runPlan(P) {
-  const dept = P.dept || '口腔修复科';
   const { task, page } = await getTaskAndPage();
   const identity = await ensureLogin(task, page, P);
-  const resolved = await resolveRecord(page, dept, P.listUrl, P.root, identity);
-
+  const resolved = await resolveRecord(page, P.dept, P.listUrl, P.root, identity);
+  const dept = resolved.dept;
   const gapsStr = await page.evaluate(SCAN_ALL_DEPARTMENT_GAPS);
   let scan = null;
   try {
@@ -481,10 +538,9 @@ async function runFill(P) {
  * @param {Object} P 运行参数
  */
 async function runVerify(P) {
-  const dept = P.dept || '口腔修复科';
   const { task, page } = await getTaskAndPage();
   const identity = await ensureLogin(task, page, P);
-  await resolveRecord(page, dept, P.listUrl, P.root, identity);
+  const resolved = await resolveRecord(page, P.dept, P.listUrl, P.root, identity);
 
   const gapsStr = await page.evaluate(SCAN_ALL_DEPARTMENT_GAPS);
   let scan = null;
