@@ -1,0 +1,20 @@
+{
+  "domain": "kygl.pkuszh.com.cn",
+  "entryUrl": "https://kygl.pkuszh.com.cn/_jp/",
+  "loginHash": "/login",
+  "listFlow": "/_jp/#/rotaconentflowprocess/list?title=%E5%AD%A6%E7%94%9F%E8%BD%AC%E6%89%8B%E5%86%8C",
+  "listWrite": "/_jp/#/rotaconentminedept/list?title=%E8%BD%AE%E8%BD%AC%E6%89%8B%E5%86%8C",
+  "detailWritePrefix": "/_jp/#/RotaConentMineDept/",
+  "detailReadPrefix": "/_jp/#/rotaconentflowprocess/",
+  "listHeaders": ["轮转科室", "轮转时间", "审批状态"],
+  "tableHeaders": ["名称", "应完成例数", "实际完成例数", "完成比例/%"],
+  "skipWhen": ["100.00%", "100%"],
+  "fields": {
+    "disease": { "required": ["检查日期", "患者姓名", "住院号", "主要诊断"], "neverFill": ["入院时间", "次要诊断", "备注"] },
+    "operation": { "required": ["手术/操作日期", "患者姓名", "住院号", "手术/操作名称"], "neverFill": ["手术/操作医生", "手术/操作I助", "手术/操作II助"] }
+  },
+  "forbiddenButtons": ["撤回", "提交审批", "删除"],
+  "nameCleaning": { "enabled": true, "testedDepartments": ["口腔修复科", "牙体牙髓科", "儿牙", "口腔黏膜科", "口腔正畸科", "综合"] },
+  "idGen": { "rulesFile": "adapters/id_rules.json", "allowAlpha": true, "dedup": "inrun-set + progress.json + optional user blacklist" },
+  "recordsModal": { "titleMarker": "查看学生轮转手册", "editAction": "编辑", "deleteAction": "删除", "exitAction": "退出" }
+}

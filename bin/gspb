@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+: << '#USAGE'
+#<<USAGE
+gspb-AI: 跨 Harness 规培手册补录工具
+
+用法:
+  gspb [login|plan|fill|verify] [选项]
+  gspb --mode <模式> [选项]
+
+子命令 / 模式:
+  login     检查登录态；未登录时引导在浏览器中登录
+  plan      扫描缺口，生成补录计划并输出配额汇总与明细对账表
+  fill      按照审阅通过的计划文件执行表单补录
+  verify    复查科室配额完成情况，验证是否 100% 达标
+
+选项:
+  -d, --dept <科室>         目标轮转科室名称（默认：口腔修复科）
+  -w, --window <START~END>  轮转时间窗（格式：YYYY-MM-DD~YYYY-MM-DD，缺省从页面读取）
+  -p, --plan <路径>         已审阅的 plan.json 文件绝对路径（fill 模式必填）
+  -m, --mode <模式>         运行模式：login | plan | fill | verify（默认：plan）
+  -u, --list-url <URL>      指定列表页路由 URL（缺省自动使用学生转手册入口）
+  -o, --open-csv            plan 生成后自动调用系统程序打开 CSV 对账清单
+  -y, --yes                 跳过交互确认
+  -c, --close               verify 通过后关闭浏览器任务空间
+  -h, --help                显示帮助信息并退出
+
+示例:
+  gspb login
+  gspb plan --dept 口腔修复科
+  gspb fill --plan ~/.cache/gspb-AI/G1096/00h9m3k3xp51anyucskjjpg9j/plan.json
+  gspb verify --dept 口腔修复科
+#USAGE
+
+MODE=""
+DEPT="口腔修复科"
+WINDOW=""
+PLAN_PATH=""
+LIST_URL=""
+OPEN_CSV="false"
+CLOSE_SPACE="false"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    login|plan|fill|verify)
+      MODE="$1"
+      shift
+      ;;
+    -m|--mode)
+      MODE="$2"
+      shift 2
+      ;;
+    -d|--dept)
+      DEPT="$2"
+      shift 2
+      ;;
+    -w|--window)
+      WINDOW="$2"
+      shift 2
+      ;;
+    -p|--plan)
+      PLAN_PATH="$2"
+      shift 2
+      ;;
+    -u|--list-url)
+      LIST_URL="$2"
+      shift 2
+      ;;
+    -o|--open-csv)
+      OPEN_CSV="true"
+      shift
+      ;;
+    -c|--close)
+      CLOSE_SPACE="true"
+      shift
+      ;;
+    -y|--yes)
+      shift
+      ;;
+    -h|--help)
+      sed -n '/^#<<USAGE/,/^#USAGE/p' "$0" | sed '1d;$d'
+      exit 0
+      ;;
+    *)
+      echo "gspb: 未知参数: $1" >&2
+      sed -n '/^#<<USAGE/,/^#USAGE/p' "$0" | sed '1d;$d' >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [ -z "$MODE" ]; then
+  MODE="plan"
+fi
+
+if [ "$MODE" = "fill" ] && [ -z "$PLAN_PATH" ]; then
+  echo "gspb: 缺少 --plan 参数，请先运行 gspb plan 生成计划" >&2
+  exit 2
+fi
+
+JSON_PARAMS=$(jq -nc \
+  --arg root "$ROOT" \
+  --arg mode "$MODE" \
+  --arg dept "$DEPT" \
+  --arg window "$WINDOW" \
+  --arg planPath "$PLAN_PATH" \
+  --arg listUrl "$LIST_URL" \
+  --argjson openCsv "$OPEN_CSV" \
+  --argjson close "$CLOSE_SPACE" \
+  '{root: $root, mode: $mode, dept: $dept, window: $window, planPath: $planPath, listUrl: $listUrl, openCsv: $openCsv, close: $close}')
+
+mkdir -p "$HOME/.cache/gspb-AI"
+echo "$JSON_PARAMS" > "$HOME/.cache/gspb-AI/params.json"
+
+PRELUDE=$(mktemp -t gspb-prelude.XXXXXX)
+trap 'rm -f "$PRELUDE"' EXIT
+
+echo "globalThis.__GSPB__ = $JSON_PARAMS;" > "$PRELUDE"
+
+EXIT_CODE=0
+{ cat "$PRELUDE"; cat "$ROOT/scripts/main.js"; } | ego-browser nodejs || EXIT_CODE=$?
+if [ $EXIT_CODE -ne 0 ]; then
+  echo "gspb: 失败，退出码 $EXIT_CODE" >&2
+  exit $EXIT_CODE
+fi
