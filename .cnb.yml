@@ -1,0 +1,19 @@
+# CNB (Cloud Native Build) 腾讯云云原生构建流水线配置
+main:
+  push:
+    - name: gspb-ci
+      docker:
+        image: node:20-alpine
+      stages:
+        - name: 语法与静态检查
+          script:
+            - node --check scripts/main.js
+            - node --check scripts/lib/clean.js
+            - node --check scripts/lib/idgen.js
+            - node --check scripts/lib/plan.js
+            - node --check scripts/lib/scan.js
+            - node --check scripts/lib/session.js
+            - node -e "JSON.parse(require('fs').readFileSync('adapters/kygl.json','utf8')); JSON.parse(require('fs').readFileSync('adapters/id_rules.json','utf8')); console.log('json ok')"
+        - name: 跨科室清洗器回归测试
+          script:
+            - node -e "const { cleanDiagnosisOrOpName } = require('./scripts/lib/clean.js'); const cases = require('./scripts/tests/clean.cases.json'); let n=0; for (const [raw,exp] of cases) { const act=cleanDiagnosisOrOpName(raw); if (act!==exp) { console.error('MISMATCH', raw); process.exit(1); } n++; } console.log('clean ok', n);"

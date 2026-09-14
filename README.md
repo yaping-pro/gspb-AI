@@ -27,7 +27,7 @@
 ### 第一步：获取代码并安装技能
 打开 macOS 终端，执行：
 ```bash
-git clone https://github.com/your-username/gspb-AI.git
+git clone https://github.com/yaping-pro/gspb-AI.git
 cd gspb-AI
 ./install.sh
 ```
